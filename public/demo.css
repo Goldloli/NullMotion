@@ -73,6 +73,8 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 
 /* Every reference, below the fold */
 .library { width: var(--w); margin: 24px auto 64px; }
+.library-group { margin-top: 28px; }
+.library-group h3 { margin: 0 0 12px; font-size: 13px; font-weight: 500; color: var(--muted); }
 .library-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 14px; }
 .library-head h2 { margin: 0; font-size: 14px; font-weight: 500; }
 .library-head span { font-size: 12px; color: var(--muted); }

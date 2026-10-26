@@ -1,5 +1,5 @@
 import { buildScrap, scrapNames } from './scraps.mjs';
-import { buildDraft } from './drafts.mjs';
+import { buildDraft } from './drafts.mjs?v=hf';
 
 // The full reference plays on top; below it, the super-simple HyperFrames drafts it grew
 // from — one per section. The draft for the section on screen follows the film exactly;
@@ -32,7 +32,7 @@ function planSections(reference) {
   return spans.map(({ start, end }, index) => {
     const section = spec?.sections[index], beats = section?.beats || [['text', `Part ${index + 1}`]];
     end = index === spans.length - 1 ? duration : end;
-    return { start, end, name: section?.name || `Part ${index + 1}`, beats, starts: beatStarts(beats.length, start, end, sceneCuts),
+    return { start, end, name: section?.name || `Part ${index + 1}`, beats, starts: beatStarts(beats, start, end, sceneCuts),
       palette: spec?.palette || { bg: '#111113', fg: '#f1f1f1', accent: '#ff5a1f' } };
   });
 }
@@ -40,6 +40,10 @@ function planSections(reference) {
 // 80% of the section (where its two reference frames were sampled) nearest the middle.
 function beatStarts(count, start, end, sceneCuts) {
   const length = end - start;
+  if (Array.isArray(count)) { // hand-timed beats carry their own start: { at: seconds into the section }
+    if (count.every(beat => typeof beat[2]?.at === 'number')) return count.map(beat => beat[2].at);
+    count = count.length;
+  }
   if (count !== 2) return Array.from({ length: count }, (_, i) => length * i / count);
   const inside = sceneCuts.map(cut => cut - start).filter(t => t > length * .3 && t < length * .8);
   inside.sort((a, b) => Math.abs(a - length * .55) - Math.abs(b - length * .55));
@@ -102,19 +106,42 @@ function render() {
 function frame() { render(); requestAnimationFrame(frame); }
 
 // ---------- Library ----------
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+function videoCard(reference) {
+  const card = document.createElement('button');
+  card.type = 'button'; card.className = 'video-card'; card.dataset.id = reference.id;
+  card.innerHTML = '<span class="video-thumb"><img alt="" loading="lazy"><span class="video-length"></span></span><span class="video-name"></span>';
+  card.querySelector('img').src = reference.poster;
+  card.querySelector('.video-length').textContent = clockText(reference.duration);
+  card.querySelector('.video-name').textContent = reference.name;
+  card.addEventListener('click', () => { load(reference); scrollTo({ top: 0, behavior: reducedMotion ? 'instant' : 'smooth' }); });
+  card.addEventListener('mouseenter', () => hoverPreview(card, reference));
+  card.addEventListener('mouseleave', () => card.querySelector('video')?.remove());
+  return card;
+}
+function libraryGroup(title, items) {
+  const block = document.createElement('section');
+  block.className = 'library-group';
+  const heading = document.createElement('h3');
+  heading.textContent = title;
+  const grid = document.createElement('div');
+  grid.className = 'library-grid';
+  grid.append(...items.map(videoCard));
+  block.append(heading, grid);
+  return block;
+}
 function renderLibrary() {
-  $('library').replaceChildren(...references.map(reference => {
-    const card = document.createElement('button');
-    card.type = 'button'; card.className = 'video-card'; card.dataset.id = reference.id;
-    card.innerHTML = '<span class="video-thumb"><img alt="" loading="lazy"><span class="video-length"></span></span><span class="video-name"></span>';
-    card.querySelector('img').src = reference.poster;
-    card.querySelector('.video-length').textContent = clockText(reference.duration);
-    card.querySelector('.video-name').textContent = reference.name;
-    card.addEventListener('click', () => { load(reference); scrollTo({ top: 0, behavior: reducedMotion ? 'instant' : 'smooth' }); });
-    card.addEventListener('mouseenter', () => hoverPreview(card, reference));
-    card.addEventListener('mouseleave', () => card.querySelector('video')?.remove());
-    return card;
-  }));
+  const dated = references.filter(reference => reference.made).sort((a, b) => b.made.localeCompare(a.made) || a.name.localeCompare(b.name));
+  const groups = new Map();
+  for (const reference of dated) {
+    const key = reference.made.slice(0, 7);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(reference);
+  }
+  const blocks = [...groups].map(([key, items]) => libraryGroup(`${MONTHS[Number(key.slice(5)) - 1]} ${key.slice(0, 4)}`, items));
+  const older = references.filter(reference => !reference.made);
+  if (older.length) blocks.push(libraryGroup('Earlier', older));
+  $('library').replaceChildren(...blocks);
   $('library-count').textContent = `${references.length} references`;
 }
 function hoverPreview(card, reference) {
@@ -127,7 +154,8 @@ function hoverPreview(card, reference) {
 function load(reference) {
   if (exporting || current?.id === reference.id) return;
   current = reference; duration = reference.duration;
-  video.src = reference.src; video.poster = reference.poster;
+  video.removeAttribute('poster');
+  video.src = reference.src;
   document.querySelectorAll('.video-card').forEach(card => card.classList.toggle('current', card.dataset.id === reference.id));
   history.replaceState(null, '', reference.id === HAND_BUILT.id ? '/' : `/?v=${encodeURIComponent(reference.id)}`);
   buildSections();
@@ -165,7 +193,7 @@ new ResizeObserver(layout).observe($('stage'));
 
 // ---------- Download ----------
 // "Whole preview" renders the film and its drafts frame by frame, not in real time: a hidden
-// copy of the film plays, every decoded frame is captured exactly once, the drafts are drawn
+// copy of the film is stepped through frame by frame, each frame captured exactly once, the drafts drawn
 // at that frame's exact time, and the result is encoded at a high bitrate with the frame's
 // own timestamp (WebCodecs + mp4-muxer). The film's audio is added from the reference.
 // The frame is the film plus the drafts and their names, with a thin margin of page.
@@ -197,7 +225,11 @@ async function drawExportFrame(context, geometry, film, time) {
   const drafts = await Promise.all(sections.map(rasterize));
   context.fillStyle = '#0b0b0c'; context.fillRect(0, 0, geometry.width, geometry.height);
   const f = geometry.film;
-  context.save(); rounded(f.x, f.y, f.w, f.h, 14 * scale); context.clip(); context.drawImage(film, f.x, f.y, f.w, f.h); context.restore();
+  // object-fit: cover, as on the page — crop the source to the card instead of stretching it.
+  const vw = film.displayWidth, vh = film.displayHeight; // film is a VideoFrame
+  const fit = Math.max(f.w / vw, f.h / vh), sw = f.w / fit, sh = f.h / fit;
+  context.save(); rounded(f.x, f.y, f.w, f.h, 14 * scale); context.clip(); context.imageSmoothingQuality = 'high';
+  context.drawImage(film, (vw - sw) / 2, (vh - sh) / 2, sw, sh, f.x, f.y, f.w, f.h); context.restore();
   context.textBaseline = 'middle'; context.textAlign = 'center'; context.font = `500 ${12.5 * scale}px Inter, system-ui, sans-serif`;
   sections.forEach((section, index) => {
     const { x, y, w, h } = geometry.cards[index], isActive = index === active;
@@ -269,40 +301,24 @@ async function exportPreview() {
     });
     let failure = null;
     encoder = new VideoEncoder({ output: (chunk, meta) => muxer.addVideoChunk(chunk, meta), error: error => { failure = error; } });
-    encoder.configure({ codec: 'avc1.640033', width: geometry.width, height: geometry.height, bitrate: 24e6, framerate: 30, latencyMode: 'quality', avc: { format: 'avc' } });
+    encoder.configure({ codec: 'avc1.640033', width: geometry.width, height: geometry.height, bitrate: 40e6, framerate: 30, latencyMode: 'quality', avc: { format: 'avc' } });
 
-    // Capture every decoded frame. If encoding falls behind, pause the hidden film until it
-    // catches up, so no frame is ever skipped.
-    const queue = []; let ended = false, lastKey = -Infinity, lastTime = -1, working = false, wake = null;
-    const capture = (now, meta) => {
-      if (meta.mediaTime > lastTime) { lastTime = meta.mediaTime; queue.push({ time: meta.mediaTime, frame: new VideoFrame(film, { timestamp: Math.round(meta.mediaTime * 1e6) }) }); }
-      if (queue.length >= 2) film.pause();
-      if (!ended) film.requestVideoFrameCallback(capture);
-      wake?.();
-    };
-    film.requestVideoFrameCallback(capture);
-    film.onended = () => { ended = true; wake?.(); };
-    film.playbackRate = .5; // headroom so the renderer never lets a frame slip by
-    await film.play();
-    while (!failure) {
-      if (!queue.length) {
-        if (ended) break;
-        if (film.paused && !working) film.play().catch(() => {});
-        await new Promise(resolve => { wake = resolve; setTimeout(resolve, 250); }); wake = null;
-        continue;
-      }
-      working = true;
-      const { time, frame } = queue.shift();
+    // Step through the film one frame at a time: seek to the middle of each frame, wait for
+    // it, draw it with the drafts at that exact time and encode it. Slower than playing, but
+    // no frame can ever be skipped, however long a frame takes to draw.
+    const FPS = 30, total = Math.floor(reference.duration * FPS);
+    let lastKey = -Infinity, lastTime = 0;
+    for (let index = 0; index < total && !failure; index++) {
+      const time = index / FPS;
+      await new Promise(resolve => { film.onseeked = resolve; film.currentTime = Math.min(reference.duration - .001, time + .5 / FPS); });
+      const frame = new VideoFrame(film, { timestamp: Math.round(time * 1e6) });
       await drawExportFrame(context, geometry, frame, time); frame.close();
-      const output = new VideoFrame(canvas, { timestamp: Math.round(time * 1e6) });
+      const output = new VideoFrame(canvas, { timestamp: Math.round(time * 1e6), duration: Math.round(1e6 / FPS) });
       const keyFrame = time - lastKey >= 2; if (keyFrame) lastKey = time;
-      encoder.encode(output, { keyFrame }); output.close();
+      encoder.encode(output, { keyFrame }); output.close(); lastTime = time;
       while (encoder.encodeQueueSize > 4) await new Promise(resolve => setTimeout(resolve, 5));
-      working = false;
-      if (film.paused && !ended && queue.length < 2) film.play().catch(() => {});
-      $('download-label').textContent = `Rendering ${Math.min(99, Math.floor(time / reference.duration * 100))}%`;
+      $('download-label').textContent = `Rendering ${Math.min(99, Math.floor(index / total * 100))}%`;
     }
-    queue.forEach(item => item.frame.close());
     if (failure) throw failure;
     await encoder.flush();
     if (audio) { $('download-label').textContent = 'Adding sound…'; await encodeAudio(audio, muxer, lastTime + 1 / 30); }
@@ -334,7 +350,7 @@ document.addEventListener('keydown', event => { if (event.key === 'Escape' && !$
 
 async function start() {
   const json = async url => { try { const response = await fetch(url); return response.ok ? await response.json() : null; } catch { return null; } };
-  const [catalog, spec, planned, changes] = await Promise.all([json('/api/references'), json('/references/drafts.json'), json('/references/sections.json'), json('/references/cuts.json')]);
+  const [catalog, spec, planned, changes] = await Promise.all([json('/api/references'), json('/references/drafts.json?v=hf5'), json('/references/sections.json?v=hf'), json('/references/cuts.json?v=hf')]);
   references = catalog?.references || []; drafts = spec || drafts; bounds = planned || {}; cuts = changes || {};
   if (!references.length) {
     const notice = document.createElement('div'); notice.className = 'notice';

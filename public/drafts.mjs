@@ -210,6 +210,130 @@ const KINDS = {
     tl.from(panel, { xPercent: -100, duration: .55, ease: 'power3.out' }, 0);
     tl.from(rows, { width: 0, stagger: .05, duration: .35 }, .4);
   },
+  still(b, t, o, c, tl, span) {
+    const frames = (o.frames && o.frames.length ? o.frames : [t]).filter(Boolean);
+    const slice = Math.max(span, .2) / frames.length;
+    frames.forEach((src, i) => {
+      const img = document.createElement('img');
+      img.src = src; img.alt = '';
+      img.style.cssText = `position:absolute;inset:0;width:${W}px;height:${H}px;object-fit:cover;filter:grayscale(1) contrast(1.15);`;
+      b.append(img);
+      const start = slice * i;
+      gsap.set(img, { autoAlpha: i ? 0 : 1 });
+      if (i) tl.set(img, { autoAlpha: 1 }, start);
+      tl.fromTo(img, { scale: 1.08 }, { scale: 1, duration: slice, ease: 'power1.out' }, start);
+      if (i < frames.length - 1) tl.to(img, { autoAlpha: 0, duration: Math.min(.18, slice * .3), ease: 'power1.in' }, start + slice * .72);
+    });
+  },
+  // A wide search pill that types its text, then a row of app tiles pops in beside it.
+  pill(b, t, o, c, tl, span) {
+    const bar = el(b, `left:40px;top:130px;width:${o.icons ? 250 : 560}px;height:100px;border-radius:50px;background:${c.card};border:2px solid ${c.line};box-sizing:border-box`);
+    const typed = el(bar, `left:34px;top:30px;font-size:36px;white-space:nowrap;overflow:hidden`, t);
+    tl.from(bar, { opacity: 0, scaleX: .2, duration: .5, ease: 'power3.out' }, 0);
+    tl.fromTo(typed, { clipPath: 'inset(0 100% 0 0)' }, { clipPath: 'inset(0 0% 0 0)', duration: Math.min(1.4, span * .4), ease: `steps(${Math.max(4, t.length)})` }, .4);
+    const tiles = Array.from({ length: o.icons || 0 }, (_, i) => el(b, `left:${310 + i * 100}px;top:135px;width:88px;height:88px;border-radius:22px;background:${i % 2 ? c.fill : c.fg}`));
+    tl.from(tiles, { scale: 0, stagger: .12, duration: .4, ease: 'back.out(1.8)' }, Math.min(1.9, span * .5));
+  },
+  // A dock of app tiles at the bottom with a line of text above it; the last tile is the bin.
+  dock(b, t, o, c, tl, span) {
+    const count = o.count || 4, width = count * 64 + 24;
+    const dock = el(b, `left:${(W - width) / 2}px;top:250px;width:${width}px;height:76px;border-radius:22px;border:2px solid ${c.line};box-sizing:border-box`);
+    const tiles = Array.from({ length: count }, (_, i) => el(dock, `left:${12 + i * 64}px;top:10px;width:52px;height:52px;border-radius:13px;background:${i === count - 1 ? 'transparent' : i === (o.pick ?? -1) ? c.fg : c.fill};border:2px solid ${i === count - 1 ? c.fg : 'transparent'};box-sizing:border-box`));
+    tl.from(dock, { opacity: 0, y: 30, duration: .45, ease: 'power3.out' }, 0);
+    tl.from(tiles, { scale: 0, stagger: .06, duration: .3, ease: 'back.out(2)' }, .15);
+    if (o.pick !== undefined) tl.to(tiles[o.pick], { y: -10, duration: .2, yoyo: true, repeat: 1 }, Math.min(1.2, span * .5));
+    if (t) { const row = words(b, t, o.size || 34, c, 'top:120px'); tl.from(row.children, { opacity: 0, y: 14, stagger: .08, duration: .35 }, .1); }
+  },
+  // "Connect App +" buttons piling up everywhere.
+  buttons(b, t, o, c, tl, span) {
+    const spots = [[330, 60], [260, 110], [120, 170], [330, 210], [150, 270], [400, 150]];
+    const pills = spots.map(([x, y]) => el(b, `left:${x}px;top:${y}px;font-size:28px;white-space:nowrap`, `${t}  +`));
+    tl.from(pills, { opacity: 0, y: 16, stagger: span * .1, duration: .3, ease: 'power2.out' }, 0);
+    tl.to(pills, { x: (i) => i % 2 ? 14 : -14, duration: span, ease: 'none' }, 0);
+  },
+  // Plain lines of type, one after another. `o.align` left/center, `o.size` per line.
+  lines(b, t, o, c, tl, span) {
+    const items = t.split('|'), size = o.size || 26;
+    const box = el(b, `left:${o.x ?? 60}px;right:${o.x ?? 60}px;top:${(o.y ?? .5) * H - items.length * size * .7}px;text-align:${o.align || 'center'}`);
+    const rows = items.map((item, i) => el(box, `position:relative;display:block;font-size:${i === 0 && o.lead ? o.lead : size}px;line-height:1.4;${i === 0 && o.lead ? 'font-weight:700;' : ''}color:${i && o.dim ? c.muted : c.fg}`, item));
+    rows.forEach(row => { row.style.position = 'relative'; });
+    tl.from(rows, { opacity: 0, y: 12, stagger: Math.min(.6, span / (items.length + 1)), duration: .35, ease: 'power2.out' }, .05);
+    if (o.suck) tl.to(rows, { x: 200, y: 120, scale: 0, opacity: 0, rotation: 30, stagger: .08, duration: .5, ease: 'power2.in' }, span - 1);
+    drift(tl, box, span, .02);
+  },
+  // The "Ask AI…" bar: a wide rounded field that types a request.
+  ask(b, t, o, c, tl, span) {
+    const box = el(b, `left:60px;top:${o.y ?? 150}px;width:520px;height:70px;border-radius:14px;background:${c.card};border:2px solid ${c.line};box-sizing:border-box`);
+    const typed = el(box, `left:18px;top:14px;right:18px;font-size:18px;white-space:nowrap;overflow:hidden`, t);
+    el(box, `left:18px;bottom:10px;width:140px;height:8px;border-radius:4px;background:${c.fill}`);
+    el(box, `right:12px;bottom:10px;width:44px;height:18px;border-radius:5px;background:${c.fg}`);
+    tl.from(box, { opacity: 0, y: 20, duration: .4, ease: 'power2.out' }, 0);
+    tl.fromTo(typed, { clipPath: 'inset(0 100% 0 0)' }, { clipPath: 'inset(0 0% 0 0)', duration: Math.min(2.4, span * .7), ease: `steps(${Math.max(4, t.length)})` }, .4);
+  },
+  // Benchmark: labelled horizontal bars grow to their score; the first one is ours.
+  bars(b, t, o, c, tl, span) {
+    const rows = t.split('|').map(item => item.split(':'));
+    if (o.title) { const title = el(b, `left:60px;top:40px;font-size:18px;font-weight:700`, o.title); tl.from(title, { opacity: 0, duration: .3 }, 0); }
+    rows.forEach(([label, value], i) => {
+      const top = 90 + i * 50;
+      const bar = el(b, `left:60px;top:${top}px;height:34px;width:${Number(value) * 4.3}px;border-radius:6px;background:${i ? c.fill : c.fg};transform-origin:left`);
+      el(bar, `left:12px;top:8px;font-size:15px;white-space:nowrap;color:${i ? c.fg : c.bg}`, label);
+      const score = el(b, `left:520px;top:${top + 8}px;font-size:15px`, `${value}%`);
+      tl.from(bar, { scaleX: 0, duration: .7, ease: 'power3.out' }, .2 + i * .12);
+      tl.from(score, { opacity: 0, duration: .3 }, .6 + i * .12);
+    });
+  },
+  // "can do ___": a fixed prefix while the words beside it roll upward.
+  cycle(b, t, o, c, tl, span) {
+    const [prefix, ...list] = t.split('|');
+    el(b, `left:0;width:300px;top:156px;text-align:right;font-size:34px`, prefix);
+    const slot = el(b, 'left:316px;top:156px;width:320px;height:46px;overflow:hidden');
+    const reel = el(slot, 'left:0;top:0;font-size:34px;white-space:nowrap');
+    list.forEach((item, i) => el(reel, `position:relative;display:block;height:46px`, item));
+    tl.from(b.children, { opacity: 0, duration: .3 }, 0);
+    tl.to(reel, { y: -46 * (list.length - 1), duration: span * .9, ease: `steps(${list.length - 1})` }, .3);
+  },
+  // A password field whose text turns into dots.
+  field(b, t, o, c, tl, span) {
+    if (o.label) el(b, `left:60px;top:160px;font-size:30px`, o.label);
+    const box = el(b, `left:${o.label ? 120 : 110}px;top:146px;width:440px;height:66px;border-radius:12px;border:2px solid ${c.line};background:${c.card};box-sizing:border-box`);
+    const typed = el(box, `left:18px;top:16px;font-size:26px;color:${c.muted};white-space:nowrap`, t);
+    const hidden = el(box, `left:18px;top:18px;font-size:26px;letter-spacing:4px;opacity:0`, '*'.repeat(12));
+    tl.from(box, { opacity: 0, y: 12, duration: .35 }, 0);
+    tl.to(typed, { opacity: 0, duration: .2 }, span * .6);
+    tl.to(hidden, { opacity: 1, duration: .2 }, span * .6);
+  },
+  // Live-action footage: a flat grey plate with a caption, slowly pushing in.
+  footage(b, t, o, c, tl, span) {
+    const plate = el(b, `left:0;top:0;width:${W}px;height:${H}px;background:${c.fill}`);
+    const mark = el(plate, `left:${W / 2 - 70}px;top:${H / 2 - 50}px;width:140px;height:100px;border:3px solid ${c.line};border-radius:10px;box-sizing:border-box`);
+    el(mark, `left:52px;top:34px;width:0;height:0;border-top:14px solid transparent;border-bottom:14px solid transparent;border-left:24px solid ${c.line}`);
+    if (t) { const label = el(b, `left:24px;bottom:22px;font-size:${o.size || 26}px;color:${c.fg}`, t); tl.from(label, { opacity: 0, y: 10, duration: .35 }, .2); }
+    tl.fromTo(plate, { scale: 1.08 }, { scale: 1, duration: span, ease: 'none' }, 0);
+  },
+  // A row of phone screens drifting sideways (an app carousel).
+  phones(b, t, o, c, tl, span) {
+    const count = o.count || 5, labels = t ? t.split('|') : [];
+    const row = el(b, `left:40px;top:40px;height:280px;width:${count * 170}px`);
+    Array.from({ length: count }, (_, i) => {
+      const phone = el(row, `left:${i * 170}px;top:0;width:140px;height:280px;border-radius:24px;border:3px solid ${c.fg};background:${i % 2 ? c.fill : c.card};box-sizing:border-box;overflow:hidden`);
+      el(phone, `left:48px;top:9px;width:38px;height:9px;border-radius:5px;background:${c.fg}`);
+      bars(el(phone, 'left:14px;top:150px;width:110px;height:80px'), 3, '', c.line);
+      if (labels[i]) el(phone, `left:14px;top:40px;right:10px;font-size:15px;font-weight:700;line-height:1.2`, labels[i]);
+    });
+    tl.from(row.children, { y: 40, opacity: 0, stagger: .08, duration: .45, ease: 'power3.out' }, 0);
+    tl.to(row, { x: -(count * 170 - 560), duration: span, ease: 'none' }, 0);
+  },
+  // A laptop outline with a line of text above it.
+  laptop(b, t, o, c, tl, span) {
+    const screen = el(b, `left:200px;top:${t ? 150 : 70}px;width:240px;height:150px;border-radius:10px;border:3px solid ${c.fg};box-sizing:border-box`);
+    bars(el(screen, 'left:16px;top:16px;width:60px;height:110px'), 5, '', c.line);
+    el(screen, `left:90px;top:40px;width:120px;height:60px;border-radius:6px;background:${c.fill}`);
+    const base = el(b, `left:170px;top:${t ? 300 : 220}px;width:300px;height:10px;border-radius:0 0 8px 8px;background:${c.fg}`);
+    tl.from([screen, base], { opacity: 0, y: 40, duration: .6, ease: 'power3.out' }, 0);
+    if (t) { const row = words(b, t, 34, c, 'top:80px'); tl.from(row.children, { opacity: 0, y: 12, stagger: .08, duration: .35 }, .2); }
+    drift(tl, [screen, base], span, .03);
+  },
   face(b, t, o, c, tl, span) {
     const blob = el(b, `left:${t ? 120 : 230}px;top:90px;width:180px;height:180px;border-radius:50%;background:${c.accent}`);
     const eyes = [60, 100].map(x => el(blob, `left:${x}px;top:80px;width:22px;height:30px;border-radius:50%;background:${c.bg}`));
